@@ -13,6 +13,6 @@ Renters run Full Model and timed leases against hardware hosts that pass certifi
 
 ## This organization
 
-Open and product repositories for Hypermesh live here as they move under the hyperme.sh org. Private extraction work starts with `turn`.
+Open and product repositories for Hypermesh.
 
 Company: [Fyber Labs](https://fyberlabs.com).
