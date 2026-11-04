@@ -22,6 +22,7 @@ class PromotionTests(unittest.TestCase):
                             VALIDATION_WORKFLOW='.github/workflows/package.yml',
                             GITHUB_EVENT_PATH=str(path), GITHUB_EVENT_NAME=event, GITHUB_REF=ref)), \
                     patch.object(r,'tag_revision',return_value=sha), \
+                    patch.object(r,'admission_evidence',return_value=11) as admission, \
                     patch.object(r,'release_by_tag',return_value=dict(
                         immutable=True, prerelease=True, draft=False, tag_name='test-'+sha)), \
                     patch.object(r,'release_files',return_value={
@@ -29,6 +30,7 @@ class PromotionTests(unittest.TestCase):
                     patch.object(r,'tested_files',return_value=(7,{'example.whl':b'tested'})), \
                     patch.object(r,'publish') as publish:
                 r.main()
+                admission.assert_called_once_with(repo, sha, 'v1.2.3')
                 return publish.call_args
 
     def test_promotes_exact_bytes_and_evidence(self):
@@ -38,6 +40,7 @@ class PromotionTests(unittest.TestCase):
         manifest=json.loads(args[3][r.MANIFEST])
         self.assertEqual((manifest['channel'],manifest['run_id'],manifest['artifact_id']),('prod',3,7))
         self.assertFalse(args[4])
+        self.assertEqual(manifest['admission_run_id'], 11)
 
     def test_forged_candidate_cannot_borrow_a_green_run(self):
         with self.assertRaisesRegex(ValueError,'differs from successful Actions artifact'):

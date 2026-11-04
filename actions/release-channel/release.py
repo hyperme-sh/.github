@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import time
+from urllib.parse import urlencode
 import zipfile
 
 ARTIFACT = 'tested-dist'
@@ -156,6 +158,49 @@ def publish(repo, tag, revision, files, prerelease):
     require(release_files(repo, release) == files, 'Published release bytes mismatch')
 
 
+def admission_evidence(repo, revision, tag, attempts=30):
+    """A configured compatibility policy must pass even if caller wiring is absent."""
+    configured = False
+    # Current main also applies: tagging older workflow code cannot escape a
+    # subsequently installed policy. Never execute the inspected repository.
+    for ref in (revision, 'main'):
+        entries = api(f'repos/{repo}/contents/?' + urlencode({'ref': ref}))
+        require(isinstance(entries, list) and len(entries) < 1000,
+                'Cannot establish complete repository policy inventory')
+        configured |= any(item['name'] == 'release-policy.json' for item in entries)
+    if not configured:
+        return None
+    query = urlencode(dict(branch=tag, event='push', head_sha=revision, per_page=100))
+    for attempt in range(attempts):
+        runs = api(f'repos/{repo}/actions/workflows/release-admission.yml/runs?{query}')['workflow_runs']
+        # Use the newest matching run; an earlier green run cannot mask a failure.
+        if runs:
+            run = max(runs, key=lambda item: item['id'])
+            require(run['repository']['full_name'] == repo and
+                    run['head_repository']['full_name'] == repo and
+                    run['head_sha'] == revision and run['head_branch'] == tag and
+                    run['event'] == 'push' and
+                    run['path'] == '.github/workflows/release-admission.yml',
+                    'Release admission identity mismatch')
+            if run['status'] == 'completed':
+                require(run['conclusion'] == 'success', 'Release compatibility did not succeed')
+                jobs = []
+                page = 1
+                while True:
+                    batch = api(f"repos/{repo}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100&page={page}")['jobs']
+                    jobs.extend(batch)
+                    if len(batch) < 100:
+                        break
+                    page += 1
+                compatibility = [job for job in jobs if job['name'].endswith('/ Release compatibility')]
+                require(len(compatibility) == 1 and compatibility[0]['conclusion'] == 'success',
+                        'Successful configuration alone is not release compatibility')
+                return run['id']
+        if attempt + 1 < attempts:
+            time.sleep(5)
+    raise ValueError('No completed compatibility evidence for this exact tag and commit')
+
+
 def main():
     repo = os.environ['GITHUB_REPOSITORY']
     workflow = os.environ['VALIDATION_WORKFLOW']
@@ -179,6 +224,7 @@ def main():
                 'Stable tags must be vMAJOR.MINOR.PATCH')
         tag = ref.removeprefix('refs/tags/')
         revision = tag_revision(repo, tag)
+        admission_run_id = admission_evidence(repo, revision, tag)
         candidate = release_by_tag(repo, f'test-{revision}')
         require(candidate and candidate.get('immutable') and candidate['prerelease']
                 and not candidate['draft'], 'No immutable test release for tag revision')
@@ -196,6 +242,8 @@ def main():
         require(manifest['assets'] == {name: digest(data) for name, data in files.items()},
                 'Test manifest asset digest mismatch')
         manifest.update(channel='prod', tag=tag)
+        if admission_run_id is not None:
+            manifest['admission_run_id'] = admission_run_id
         prerelease = False
     files[MANIFEST] = (json.dumps(manifest, sort_keys=True, indent=2) + '\n').encode()
     publish(repo, tag, revision, files, prerelease)
