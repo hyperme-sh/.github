@@ -45,7 +45,8 @@ version. This action does not itself deploy or establish service health.
 
 Use one publisher workflow with triggers for the validation workflow's completion
 and stable tag pushes, contents-write/actions-read permissions, and a repository
-release concurrency group with cancellation disabled. Gate workflow_run publication
+release concurrency group keyed by source revision/tag, with cancellation disabled
+(so separate main merges do not evict one another from the pending queue). Gate workflow_run publication
 on successful main push events. The action repeats these checks against the API.
 Do not grant write tokens to validation jobs or execute downloaded package code in
 the publisher. Repositories with selected-action policies must allow the exact
