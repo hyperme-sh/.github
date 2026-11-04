@@ -24,6 +24,11 @@ publish to PyPI/npm. A service contract wheel is still a contract wheel, not a
 qualified OCI runtime. Deployment adapters must understand the artifact type.
 
 Enable **immutable releases** in the caller repository before the first run.
+The publisher verifies the immutable flag on the resulting release; repository
+settings audits use operator authority separately because the settings endpoint
+requires administration access that GITHUB_TOKEN intentionally does not have.
+If immutability is disabled, publication fails verification and the resulting
+mutable release is not an accepted candidate; investigate before retrying.
 Private repositories and their assets remain private. No public attestation,
 new App, credential, or reviewer gate is required. Immutable publication uses a
 draft followed by asset upload and final publication. An interrupted draft is

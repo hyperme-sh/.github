@@ -101,8 +101,14 @@ def release_by_tag(repo, tag):
 
 def release_files(repo, release):
     result = {}
-    assets = api(f"repos/{repo}/releases/{release['id']}/assets?per_page=100")
-    require(len(assets) < 100, 'Too many release assets')
+    assets = []
+    page = 1
+    while True:
+        batch = api(f"repos/{repo}/releases/{release['id']}/assets?per_page=100&page={page}")
+        assets.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
     for asset in assets:
         name = asset['name']
         require(name not in result and asset['size'] <= MAX_BYTES,
@@ -123,8 +129,6 @@ def tag_revision(repo, tag):
 
 
 def publish(repo, tag, revision, files, prerelease):
-    require(api(f'repos/{repo}/immutable-releases')['enabled'],
-            'Enable immutable releases before publication')
     existing = release_by_tag(repo, tag)
     if existing:
         require(not existing['draft'] and existing.get('immutable')

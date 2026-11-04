@@ -91,11 +91,30 @@ class ReleaseTests(unittest.TestCase):
                 self.assertRaises(ValueError):
             r.publish('hyperme-sh/example', 'v1.0.0', 'a' * 40, {'package.whl': b'tested'}, False)
 
-    def test_publication_requires_immutability(self):
-        with patch.object(r, 'api', return_value={'enabled': False}), \
-                patch.object(r, 'gh') as command, self.assertRaises(ValueError):
-            r.publish('hyperme-sh/example', 'v1.0.0', 'a' * 40, {}, False)
-        command.assert_not_called()
+    def test_publication_uses_contents_token_and_checks_immutable_result(self):
+        for immutable in (True, False):
+            release=dict(id=2, immutable=immutable, draft=False, prerelease=False)
+            with self.subTest(immutable=immutable), \
+                    patch.object(r, 'api') as api, \
+                    patch.object(r, 'release_by_tag', side_effect=[None, release]), \
+                    patch.object(r, 'gh') as command, \
+                    patch.object(r, 'tag_revision', return_value='a'*40), \
+                    patch.object(r, 'release_files', return_value={'example.whl':b'tested'}):
+                if immutable:
+                    r.publish('hyperme-sh/example','v1.0.0','a'*40,{'example.whl':b'tested'},False)
+                else:
+                    with self.assertRaisesRegex(ValueError,'Publication is not immutable'):
+                        r.publish('hyperme-sh/example','v1.0.0','a'*40,{'example.whl':b'tested'},False)
+                api.assert_not_called()  # No administration-only settings request.
+                self.assertEqual(command.call_count,3)  # Draft, upload, publish.
+
+    def test_release_assets_paginate_full_pages(self):
+        assets=[dict(id=i,name=f'package-{i}.whl',size=4) for i in range(101)]
+        with patch.object(r,'api',side_effect=[assets[:100],assets[100:]]) as api, \
+                patch.object(r,'gh',return_value=b'data'):
+            files=r.release_files('hyperme-sh/example',dict(id=1))
+        self.assertEqual(len(files),101)
+        self.assertIn('page=2',api.call_args.args[0])
 
 
 if __name__ == '__main__':
