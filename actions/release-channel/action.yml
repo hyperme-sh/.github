@@ -1,0 +1,17 @@
+name: Verified package channels
+description: Publish tested main artifacts or promote their exact bytes on a stable tag.
+inputs:
+  workflow:
+    description: Repository-relative validation workflow path
+    required: true
+  token:
+    description: Repository-scoped token with contents write and actions read
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        VALIDATION_WORKFLOW: ${{ inputs.workflow }}
+      run: python3 "$GITHUB_ACTION_PATH/release.py"
