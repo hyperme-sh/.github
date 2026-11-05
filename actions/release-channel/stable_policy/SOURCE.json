@@ -1,0 +1,5 @@
+{
+  "repository": "hyperme-sh/spanopticon",
+  "revision": "7f5b9b21363d41b8f8ed14571195d10f4a11899f",
+  "normalization": "Only imports from release.policy/release.accepted are renamed to stable_policy.policy/stable_policy.accepted."
+}
