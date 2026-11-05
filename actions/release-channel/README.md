@@ -56,3 +56,19 @@ on successful main push events. The action repeats these checks against the API.
 Do not grant write tokens to validation jobs or execute downloaded package code in
 the publisher. Repositories with selected-action policies must allow the exact
 upload-artifact and release action SHAs before enabling these workflows.
+
+### Automated compatibility evidence
+
+Before stable publication, the publisher checks for `release-policy.json` in both
+the tagged revision and current main. If either declares a component policy,
+the separate `release-admission.yml` push run for the exact tag and commit must
+succeed, including its Release compatibility job. Configuration-only success,
+skipped compatibility, fork runs and older green attempts cannot substitute.
+The publisher waits up to 150 seconds for independent admission and fails if
+it does not complete successfully. Retrying publication after successful admission
+is safe. The production manifest records the admission run ID.
+
+This check also applies when a caller omits its job dependency or tags an older
+workflow revision. Retain the caller dependency for scheduling and early failure.
+These are automated artifact checks; no required reviewer, environment approval
+or branch protection is needed.
