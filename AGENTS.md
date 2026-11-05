@@ -38,3 +38,14 @@ or historical approval as permission for a new version.
 This is an instruction to the agent, not a request to add GitHub reviewers,
 branch protections, rulesets, environment approvals, or release/deployment gates.
 Those remain prohibited unless the user explicitly requests the specific change.
+
+## Authorized test bundle automation
+
+The owner authorized preparation of `next`-driven `MAJOR.MINOR.PATCH-test.N`
+autotagging and prerelease bundles, initially targeting `0.24.0`, with embedded
+package versions preserved. Explicitly opted-in callers may publish test bundles
+from their qualified main artifacts. This scoped test-channel authorization does
+not authorize stable promotion, other version lines, historical tag/release
+mutation, or changes to package versions. Stable promotion requires the owner's
+explicit selection of the exact gold test candidate and destination. Do not infer
+that selection from a merge or successful test run.
