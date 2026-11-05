@@ -1,0 +1,22 @@
+name: Versioned test bundles
+description: Publish qualified next-test.N bundles or promote an explicitly selected test without rebuilding.
+inputs:
+  mode:
+    description: test (workflow_run) or promote (explicit workflow_dispatch)
+    required: true
+  token:
+    description: Repository-scoped token with contents write and actions read
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+      with:
+        version: '0.11.26'
+        enable-cache: false
+    - shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        BUNDLE_MODE: ${{ inputs.mode }}
+      run: uv run --no-project --no-config --managed-python --python 3.12 python "$GITHUB_ACTION_PATH/../release-channel/bundle.py"

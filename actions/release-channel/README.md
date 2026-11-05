@@ -73,3 +73,8 @@ changing source; never clear a claim after stable publication. Subsequent releas
 require genuine accepted stable provenance and ordinary compatibility admission.
 Automatic test releases remain disabled. Initial mode supports package assets;
 OCI and runtime/provider deployment qualification remain separate.
+
+For explicitly opted-in `next-test.N` bundle publication and byte-preserving
+bundle promotion, see [bundle-channel](../bundle-channel/README.md). That separate
+action preserves embedded package versions and does not weaken this package
+publisher's admission checks.
