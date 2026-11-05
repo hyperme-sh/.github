@@ -6,9 +6,10 @@ from test_release import r
 
 
 class PromotionTests(unittest.TestCase):
-    def exercise(self, event='push', ref='refs/tags/v1.2.3', independent_error=None):
+    def exercise(self, event='push', ref='refs/tags/v1.2.3', independent_error=None, initial=False):
         repo='hyperme-sh/example';sha='a'*40
-        def independent(*args):
+        def independent(*args, **kwargs):
+            self.assertEqual(kwargs, {"initial": True} if initial else {})
             self.assertEqual(args,(repo,sha,'v1.2.3',{'example.whl':b'tested'}))
             if independent_error:raise independent_error
             return 'c'*40
@@ -16,16 +17,18 @@ class PromotionTests(unittest.TestCase):
                 VALIDATION_WORKFLOW='.github/workflows/package.yml',GITHUB_EVENT_NAME=event,GITHUB_REF=ref)), \
                 patch.object(r,'tag_revision',return_value=sha), \
                 patch.object(r,'release_by_tag',return_value=None), \
-                patch.object(r,'admission_evidence',return_value=(11,2)) as admission, \
+                patch.object(r,'admission_evidence',return_value=(11,2,initial)) as admission, \
                 patch.object(r,'qualified_run',return_value=3), \
                 patch.object(r,'tested_files',return_value=(7,{'example.whl':b'tested'})), \
                 patch.object(r,'independent_admission',side_effect=independent), \
+                patch.object(r,'initial_source_claim') as claim, \
                 patch.object(r,'publish') as publish:
             try:r.main()
             except ValueError:
                 publish.assert_not_called()
                 raise
-            admission.assert_called_once_with(repo,sha,'v1.2.3')
+            admission.assert_called_once_with(repo,sha,'v1.2.3',include_mode=True)
+            self.assertEqual(claim.call_count, int(initial))
             return publish.call_args
 
     def test_publishes_exact_actions_bytes_with_independent_evidence(self):
@@ -62,3 +65,7 @@ class PromotionTests(unittest.TestCase):
                 r.qualified_run('hyperme-sh/example','.github/workflows/package.yml','a'*40)
         with patch.object(r,'api',side_effect=[{'workflow_runs':[{**run,'head_sha':'b'*40}]*100},{'workflow_runs':[run]}]):
             self.assertEqual(r.qualified_run('hyperme-sh/example','.github/workflows/package.yml','a'*40),3)
+
+    def test_initial_publication_rechecks_policy_and_records_claim_mode(self):
+        args=self.exercise(initial=True).args
+        self.assertIs(json.loads(args[3][r.MANIFEST])["initial_release"], True)

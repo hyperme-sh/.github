@@ -176,7 +176,7 @@ def policy_configured(repo, revision):
     return configured
 
 
-def check_admission_record(repo, revision, tag, run):
+def check_admission_record(repo, revision, tag, run, *, include_mode=False):
     require(run['repository']['full_name'] == repo and
             run['head_repository']['full_name'] == repo and
             run['head_sha'] == revision and run['head_branch'] == tag and
@@ -193,13 +193,15 @@ def check_admission_record(repo, revision, tag, run):
         if len(batch) < 100:
             break
         page += 1
-    compatibility = [job for job in jobs if job['name'].endswith('/ Release compatibility')]
-    require(len(compatibility) == 1 and compatibility[0]['conclusion'] == 'success',
-            'Successful configuration alone is not release compatibility')
-    return run['id'], run['run_attempt']
+    compatibility = [job for job in jobs if job['name'].endswith('/ Release compatibility') and job['conclusion'] == 'success']
+    initial = [job for job in jobs if job['name'].endswith('/ Initial release admission') and job['conclusion'] == 'success']
+    require(len(compatibility) + len(initial) == 1 and (include_mode or compatibility),
+            'Successful configuration alone is not release compatibility or initial admission')
+    result = (run['id'], run['run_attempt'])
+    return (*result, bool(initial)) if include_mode else result
 
 
-def admission_evidence(repo, revision, tag, attempts=30):
+def admission_evidence(repo, revision, tag, attempts=30, *, include_mode=False):
     """A configured compatibility policy must pass even if caller wiring is absent."""
     if not policy_configured(repo, revision):
         return None
@@ -210,7 +212,7 @@ def admission_evidence(repo, revision, tag, attempts=30):
         if runs:
             run = max(runs, key=lambda item: item['id'])
             if run['status'] == 'completed':
-                return check_admission_record(repo, revision, tag, run)
+                return check_admission_record(repo, revision, tag, run, include_mode=include_mode)
         if attempt + 1 < attempts:
             time.sleep(5)
     raise ValueError('No completed compatibility evidence for this exact tag and commit')
@@ -251,7 +253,7 @@ def latest_stable(repo, before_version=None):
     raise ValueError('Stable release inventory exceeds limit')
 
 
-def independent_admission(repo, revision, tag, files, *, baseline_revision=None, before_version=None):
+def independent_admission(repo, revision, tag, files, *, baseline_revision=None, before_version=None, initial=False):
     """Re-run pinned policy on data, independently of caller job names/flags."""
     main_revision = baseline_revision or api(f'repos/{repo}/commits/main').get('sha')
     require(isinstance(main_revision, str) and re.fullmatch('[0-9a-f]{40}', main_revision), 'Immutable main policy revision required')
@@ -293,22 +295,26 @@ def independent_admission(repo, revision, tag, files, *, baseline_revision=None,
                         'Unsafe contract metadata path')
                 fetch(destination, ref, folder+'/'+contract)
             return document
-        accepted = bundle(baseline, main_revision, 'releases/accepted')
-        provenance = json_document(fetch(baseline, main_revision, 'releases/accepted/provenance.json'))
-        require(provenance.get('release_id') == latest_stable(repo, before_version=before_version).get('id'),
-                'Current main does not record the latest actual stable release')
-        stable_source = provenance.get('revision')
-        require(isinstance(stable_source, str) and re.fullmatch('[0-9a-f]{40}', stable_source),
-                'Stable source revision must be immutable')
-        published = bundle(root/'published', stable_source, 'releases/candidate')
-        require(same_json(accepted, published), 'Accepted declaration differs from the immutable stable source')
-        for component in accepted['components'].values():
-            relative = component['contract']
-            require((baseline/'releases/accepted'/relative).read_bytes()
-                    == (root/'published/releases/candidate'/relative).read_bytes(),
-                    'Accepted API contract differs from the immutable stable source')
         declared = bundle(candidate, revision, 'releases/candidate')
-        accepted_version = component_release.admit(candidate, baseline, repo, policy['line'], tag)
+        if initial:
+            accepted_version = component_release.admit_initial(candidate, repo, policy['line'], tag,
+                fetch=lambda path: initial_history(path, before_version))
+        else:
+            accepted = bundle(baseline, main_revision, 'releases/accepted')
+            provenance = json_document(fetch(baseline, main_revision, 'releases/accepted/provenance.json'))
+            require(provenance.get('release_id') == latest_stable(repo, before_version=before_version).get('id'),
+                    'Current main does not record the latest actual stable release')
+            stable_source = provenance.get('revision')
+            require(isinstance(stable_source, str) and re.fullmatch('[0-9a-f]{40}', stable_source),
+                    'Stable source revision must be immutable')
+            published = bundle(root/'published', stable_source, 'releases/candidate')
+            require(same_json(accepted, published), 'Accepted declaration differs from the immutable stable source')
+            for component in accepted['components'].values():
+                relative = component['contract']
+                require((baseline/'releases/accepted'/relative).read_bytes()
+                        == (root/'published/releases/candidate'/relative).read_bytes(),
+                        'Accepted API contract differs from the immutable stable source')
+            accepted_version = component_release.admit(candidate, baseline, repo, policy['line'], tag)
         artifact = declared['components'][policy['component']]['artifact']
         if artifact['kind'] == 'package':
             require('sha256:' + artifact['sha256'] in {digest(data) for data in files.values()}, 'Candidate does not identify an actual tested artifact')
@@ -319,6 +325,43 @@ def independent_admission(repo, revision, tag, files, *, baseline_revision=None,
             require(same_json(proof, {'schema_version': 1, 'repository': repo, 'revision': revision,
                              'version': accepted_version, 'artifact': artifact}), 'Tested container provenance differs from candidate')
         return main_revision
+
+
+def initial_history(path, before_version=None):
+    batch = api(path)
+    require(isinstance(batch, list) and len(batch) <= 100, 'Invalid release inventory')
+    if before_version is None:
+        return batch
+    # Recovery of an already immutable initial release checks only earlier
+    # versions; later normal releases do not invalidate its original evidence.
+    result = []
+    boundary = tuple(map(int, before_version.split('.')))
+    for item in batch:
+        require(isinstance(item, dict) and type(item.get('prerelease')) is bool, 'Incomplete release channel evidence')
+        if item['prerelease']:
+            result.append(item)
+            continue
+        tag = item.get('tag_name', '')
+        require(re.fullmatch(r'v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', tag), 'Unrecognized stable release tag')
+        # Preserve page length so filtering cannot terminate pagination early.
+        result.append(item if tuple(map(int, tag[1:].split('.'))) < boundary else {'prerelease': True})
+    return result
+
+
+def initial_source_claim(repo, revision, *, existing=False):
+    """Atomically reserve one source; retry verification never mutates the ref."""
+    require(re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo)
+            and re.fullmatch(r'[0-9a-f]{40}', revision), 'Invalid initial source identity')
+    ref = 'heads/release/initial-stable'
+    if not existing:
+        try:
+            gh('api', f'repos/{repo}/git/refs', '--method', 'POST',
+               '-f', 'ref=refs/' + ref, '-f', 'sha=' + revision)
+        except subprocess.CalledProcessError:
+            pass  # A fresh read must still prove this exact source owns the claim.
+    claim = api(f'repos/{repo}/git/ref/{ref}')
+    require(claim.get('ref') == 'refs/' + ref and claim.get('object', {}).get('type') == 'commit'
+            and claim['object'].get('sha') == revision, 'Another source owns the initial stable publication claim')
 
 
 def qualified_run(repo, workflow, revision):
@@ -355,6 +398,10 @@ def verify_existing_publication(repo, tag, revision, workflow, release):
             'Stable publication manifest is not canonical')
     required = {'schema', 'repository', 'channel', 'tag', 'revision', 'workflow', 'run_id', 'artifact_id', 'assets'}
     configured = policy_configured(repo, revision)
+    initial = manifest.get('initial_release') is True
+    if initial:
+        require(configured, 'Initial evidence requires an owning policy')
+        required.add('initial_release')
     if configured:
         required |= {'admission_run_id', 'admission_run_attempt', 'policy_baseline_revision'}
     require(set(manifest) == required and type(manifest.get('schema')) is int and manifest['schema'] == 1
@@ -369,14 +416,19 @@ def verify_existing_publication(repo, tag, revision, workflow, release):
         require(type(run_id) is int and run_id > 0 and type(attempt) is int and attempt > 0, 'Invalid original admission identity')
         original = api(f'repos/{repo}/actions/runs/{run_id}/attempts/{attempt}')
         require(original.get('id') == run_id and original.get('run_attempt') == attempt, 'Original admission identity differs')
-        require(check_admission_record(repo, revision, tag, original) == (run_id, attempt), 'Original admission attempt differs')
+        if initial:
+            require(check_admission_record(repo, revision, tag, original, include_mode=True) == (run_id, attempt, True), 'Original initial admission differs')
+            initial_source_claim(repo, revision, existing=True)
+        else:
+            require(check_admission_record(repo, revision, tag, original) == (run_id, attempt), 'Original admission attempt differs')
     _, tested = tested_files(repo, workflow, revision, manifest['run_id'], manifest['artifact_id'])
     require(tested == files, 'Existing stable bytes differ from original tested artifact')
     if configured:
         baseline = manifest['policy_baseline_revision']
         require(isinstance(baseline, str) and re.fullmatch('[0-9a-f]{40}', baseline), 'Invalid original baseline revision')
+        options = {'initial': True} if initial else {}
         independent_admission(repo, revision, tag, files, baseline_revision=baseline,
-                              before_version=tag.removeprefix('v'))
+                              before_version=tag.removeprefix('v'), **options)
     print('Existing immutable stable publication verified; original provenance preserved')
 
 
@@ -394,15 +446,20 @@ def main():
     if existing is not None:
         verify_existing_publication(repo, tag, revision, workflow, existing)
         return
-    admission_run_id = admission_evidence(repo, revision, tag)
+    admission_run_id = admission_evidence(repo, revision, tag, include_mode=True)
     run_id = qualified_run(repo, workflow, revision)
     artifact_id, files = tested_files(repo, workflow, revision, run_id)
     manifest = dict(schema=1, repository=repo, channel='prod', tag=tag, revision=revision,
                     workflow=workflow, run_id=run_id, artifact_id=artifact_id,
                     assets={name: digest(data) for name, data in sorted(files.items())})
     if admission_run_id is not None:
-        manifest['policy_baseline_revision'] = independent_admission(repo, revision, tag, files)
-        manifest['admission_run_id'], manifest['admission_run_attempt'] = admission_run_id
+        run, attempt, initial = admission_run_id
+        options = {'initial': True} if initial else {}
+        manifest['policy_baseline_revision'] = independent_admission(repo, revision, tag, files, **options)
+        if initial:
+            initial_source_claim(repo, revision)
+            manifest['initial_release'] = True
+        manifest['admission_run_id'], manifest['admission_run_attempt'] = run, attempt
     files[MANIFEST] = (json.dumps(manifest, sort_keys=True, indent=2) + '\n').encode()
     publish(repo, tag, revision, files, False)
 

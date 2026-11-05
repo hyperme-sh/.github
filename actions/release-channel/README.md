@@ -48,3 +48,25 @@ exact admission run attempt and recorded baseline snapshot. They recheck the
 preceding stable version for that release and preserve the original manifest,
 without publishing again or requiring main's accepted pointer to stay behind.
 Missing or expired original evidence still fails verification closed.
+
+### Initial stable package publication
+
+A successful exact-tag `Initial release admission` job is distinct from backward
+compatibility. The publisher independently reruns the pinned initial policy on
+bounded metadata fetched from the owning source, binds its package digest to the
+validated Actions artifact, and checks every page of live release history.
+Existing stable releases or unknown history block initial publication.
+
+Before publication it atomically claims `refs/heads/release/initial-stable` at the
+source revision. Competing revisions cannot both become the first stable release;
+the candidate version binds the permitted tag. This ordinary Git ref is never
+force-updated and adds no branch protection, reviewer or approval setting.
+
+The immutable publication records its initial mode and original main-policy
+revision. Retry verification rechecks the original admission attempt, artifact,
+policy, source claim and absence of earlier stable versions without mutating the
+claim or published evidence. Failed unpublished attempts may need repair before
+changing source; never clear a claim after stable publication. Subsequent releases
+require genuine accepted stable provenance and ordinary compatibility admission.
+Automatic test releases remain disabled. Initial mode supports package assets;
+OCI and runtime/provider deployment qualification remain separate.
