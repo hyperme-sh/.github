@@ -40,3 +40,9 @@ asset upload and final publication, then verifies the result's immutability, tag
 source and bytes. Existing identical results are preserved; replacement bytes are
 refused. Interrupted drafts remain unpublished for diagnosis. This action does
 not deploy services, qualify provider behavior or establish runtime health.
+
+Retries of a completed immutable release verify its original validation artifact,
+exact admission run attempt and recorded baseline snapshot. They recheck the
+preceding stable version for that release and preserve the original manifest,
+without publishing again or requiring main's accepted pointer to stay behind.
+Missing or expired original evidence still fails verification closed.

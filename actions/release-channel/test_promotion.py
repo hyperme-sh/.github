@@ -15,7 +15,8 @@ class PromotionTests(unittest.TestCase):
         with patch.dict(os.environ,dict(GITHUB_REPOSITORY=repo,
                 VALIDATION_WORKFLOW='.github/workflows/package.yml',GITHUB_EVENT_NAME=event,GITHUB_REF=ref)), \
                 patch.object(r,'tag_revision',return_value=sha), \
-                patch.object(r,'admission_evidence',return_value=11) as admission, \
+                patch.object(r,'release_by_tag',return_value=None), \
+                patch.object(r,'admission_evidence',return_value=(11,2)) as admission, \
                 patch.object(r,'qualified_run',return_value=3), \
                 patch.object(r,'tested_files',return_value=(7,{'example.whl':b'tested'})), \
                 patch.object(r,'independent_admission',side_effect=independent), \
@@ -34,6 +35,7 @@ class PromotionTests(unittest.TestCase):
         manifest=json.loads(args[3][r.MANIFEST])
         self.assertEqual((manifest['channel'],manifest['run_id'],manifest['artifact_id']),('prod',3,7))
         self.assertEqual(manifest['policy_baseline_revision'],'c'*40)
+        self.assertEqual((manifest['admission_run_id'],manifest['admission_run_attempt']),(11,2))
         self.assertEqual(manifest['assets'],{'example.whl':r.digest(b'tested')})
         self.assertFalse(args[4])
 

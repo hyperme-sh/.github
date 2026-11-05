@@ -71,6 +71,13 @@ class IndependentAdmissionTests(unittest.TestCase):
     def test_stale_main_record_cannot_ignore_a_newer_stable_release(self):
         with patch.object(r,'api',return_value={'sha':self.main_sha}),patch.object(r,'source_file',side_effect=self.source),patch.object(r,'latest_stable',return_value={'id':8}),self.assertRaisesRegex(ValueError,'latest actual stable'):
             r.independent_admission(self.repo,self.revision,'v0.24.1',{'component.whl':b'tested'})
+    def test_existing_release_rechecks_its_original_preceding_stable_context(self):
+        records=[dict(id=7,tag_name='v0.24.0',draft=False,prerelease=False),
+                 dict(id=8,tag_name='v0.24.1',draft=False,prerelease=False),
+                 dict(id=9,tag_name='v0.25.0',draft=False,prerelease=False)]
+        with patch.object(r,'api',return_value=records) as api,patch.object(r,'source_file',side_effect=self.source),patch.object(accepted,'github_json',side_effect=self.live):
+            self.assertEqual(r.independent_admission(self.repo,self.revision,'v0.24.1',{'component.whl':b'tested'},baseline_revision=self.main_sha,before_version='0.24.1'),self.main_sha)
+            self.assertTrue(all('/releases?' in call.args[0] for call in api.call_args_list))
     def test_mutable_main_cannot_rewrite_the_stable_contract(self):
         raw=b'{"public_api":{"read":"rewritten"}}';self.data[(self.main_sha,'releases/accepted/contract.json')]=raw
         data=json.loads(self.data[(self.main_sha,'releases/accepted/release.json')]);data['components']['component']['contract_sha256']=hashlib.sha256(raw).hexdigest()
