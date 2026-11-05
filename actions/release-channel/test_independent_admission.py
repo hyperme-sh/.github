@@ -19,6 +19,8 @@ class IndependentAdmissionTests(unittest.TestCase):
             (self.revision,'pyproject.toml'):b'[project]\nname="component"\nversion="0.24.1"\n',
             (self.main_sha,'releases/accepted/release.json'):json.dumps(bundle('0.24.0','b'*64)).encode(),
             (self.main_sha,'releases/accepted/contract.json'):raw,
+            ('b'*40,'releases/candidate/release.json'):json.dumps(bundle('0.24.0','b'*64)).encode(),
+            ('b'*40,'releases/candidate/contract.json'):raw,
             (self.revision,'releases/candidate/release.json'):json.dumps(bundle('0.24.1',hashlib.sha256(b'tested').hexdigest())).encode(),
             (self.revision,'releases/candidate/contract.json'):raw}
         self.provenance={'repository':self.repo,'revision':'b'*40,'release_id':7,'tag':'v0.24.0','assets':{'component.whl':'sha256:'+'b'*64}}
@@ -66,6 +68,20 @@ class IndependentAdmissionTests(unittest.TestCase):
     def test_stale_main_record_cannot_ignore_a_newer_stable_release(self):
         with patch.object(r,'api',return_value={'sha':self.main_sha}),patch.object(r,'source_file',side_effect=self.source),patch.object(r,'latest_stable',return_value={'id':8}),self.assertRaisesRegex(ValueError,'latest actual stable'):
             r.independent_admission(self.repo,self.revision,'v0.24.1',{'component.whl':b'tested'})
+    def test_mutable_main_cannot_rewrite_the_stable_contract(self):
+        raw=b'{"public_api":{"read":"rewritten"}}';self.data[(self.main_sha,'releases/accepted/contract.json')]=raw
+        data=json.loads(self.data[(self.main_sha,'releases/accepted/release.json')]);data['components']['component']['contract_sha256']=hashlib.sha256(raw).hexdigest()
+        self.data[(self.main_sha,'releases/accepted/release.json')]=json.dumps(data).encode()
+        with self.assertRaisesRegex(ValueError,'immutable stable source'):self.exercise()
+    def test_qualification_manifest_cannot_be_relabelled_by_copying_its_path(self):
+        path=(self.revision,'releases/candidate/release.json');data=json.loads(self.data[path]);data['purpose']='artifact-qualification';data['stable_release']=False;self.data[path]=json.dumps(data).encode()
+        with self.assertRaisesRegex(ValueError,'Test qualification'):self.exercise()
+    def test_contract_paths_cannot_read_outside_the_metadata_snapshot(self):
+        path=(self.main_sha,'releases/accepted/release.json');original=self.data[path]
+        for contract in ['/etc/passwd','../../outside','.git/config']:
+            with self.subTest(contract=contract):
+                data=json.loads(original);data['components']['component']['contract']=contract;self.data[path]=json.dumps(data).encode()
+                with self.assertRaisesRegex(ValueError,'Unsafe contract'):self.exercise()
     def test_metadata_reads_are_bounded_and_cannot_escape(self):
         for path in ['../escape','/absolute','.git/config']:
             with self.subTest(path=path),self.assertRaisesRegex(ValueError,'Unsafe'):r.source_file(self.repo,self.revision,path)

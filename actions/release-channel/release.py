@@ -14,7 +14,7 @@ from urllib.parse import quote
 import zipfile
 
 from stable_policy import component_release
-from stable_policy.policy import json_document
+from stable_policy.policy import json_document, same_json
 
 ARTIFACT = 'tested-dist'
 MANIFEST = 'release-manifest.json'
@@ -267,17 +267,34 @@ def independent_admission(repo, revision, tag, files):
             fetch(candidate, revision, relative)
         def bundle(destination, ref, folder):
             document = json_document(fetch(destination, ref, folder+'/release.json'))
+            require(document.get('stable_release') is not False
+                    and document.get('purpose') in {None, 'stable-release'},
+                    'Test qualification cannot be used as stable release metadata')
             components = document.get('components')
             require(isinstance(components, dict) and len(components) == 1, 'Expected one owning component')
             for component in components.values():
                 contract = component.get('contract')
                 require(isinstance(contract, str), 'Release contract path required')
+                relative = PurePosixPath(contract)
+                require(not relative.is_absolute() and '..' not in relative.parts
+                        and '.git' not in relative.parts and len(contract) <= 512,
+                        'Unsafe contract metadata path')
                 fetch(destination, ref, folder+'/'+contract)
             return document
-        bundle(baseline, main_revision, 'releases/accepted')
+        accepted = bundle(baseline, main_revision, 'releases/accepted')
         provenance = json_document(fetch(baseline, main_revision, 'releases/accepted/provenance.json'))
         require(provenance.get('release_id') == latest_stable(repo).get('id'),
                 'Current main does not record the latest actual stable release')
+        stable_source = provenance.get('revision')
+        require(isinstance(stable_source, str) and re.fullmatch('[0-9a-f]{40}', stable_source),
+                'Stable source revision must be immutable')
+        published = bundle(root/'published', stable_source, 'releases/candidate')
+        require(same_json(accepted, published), 'Accepted declaration differs from the immutable stable source')
+        for component in accepted['components'].values():
+            relative = component['contract']
+            require((baseline/'releases/accepted'/relative).read_bytes()
+                    == (root/'published/releases/candidate'/relative).read_bytes(),
+                    'Accepted API contract differs from the immutable stable source')
         declared = bundle(candidate, revision, 'releases/candidate')
         accepted_version = component_release.admit(candidate, baseline, repo, policy['line'], tag)
         artifact = declared['components'][policy['component']]['artifact']
