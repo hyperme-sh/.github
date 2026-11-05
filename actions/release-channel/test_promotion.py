@@ -56,3 +56,5 @@ class PromotionTests(unittest.TestCase):
         for invalid in [[],[{**run,'head_sha':'b'*40}],[run,{**run,'id':4,'status':'in_progress'}]]:
             with self.subTest(invalid=invalid),patch.object(r,'api',return_value={'workflow_runs':invalid}),self.assertRaises(ValueError):
                 r.qualified_run('hyperme-sh/example','.github/workflows/package.yml','a'*40)
+        with patch.object(r,'api',side_effect=[{'workflow_runs':[{**run,'head_sha':'b'*40}]*100},{'workflow_runs':[run]}]):
+            self.assertEqual(r.qualified_run('hyperme-sh/example','.github/workflows/package.yml','a'*40),3)

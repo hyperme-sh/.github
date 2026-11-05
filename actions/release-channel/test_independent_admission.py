@@ -60,6 +60,9 @@ class IndependentAdmissionTests(unittest.TestCase):
     def test_tagged_version_sources_cannot_redirect_to_a_decoy(self):
         data={**self.policy,'version_files':['decoy/pyproject.toml']};self.data[(self.revision,'release-policy.json')]=json.dumps(data).encode()
         with self.assertRaisesRegex(ValueError,'version_files'):self.exercise()
+    def test_policy_values_do_not_confuse_true_with_one(self):
+        data={**self.policy,'schema_version':True};self.data[(self.revision,'release-policy.json')]=json.dumps(data).encode()
+        with self.assertRaisesRegex(ValueError,'schema_version'):self.exercise()
     def test_release_inventory_ignores_test_snapshots_and_orders_stable_versions(self):
         stable=lambda n:dict(id=n,tag_name=f'v0.24.{n}',draft=False,prerelease=False)
         records=[stable(1),dict(id=99,tag_name='test-'+'f'*40,draft=False,prerelease=True),stable(2)]

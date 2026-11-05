@@ -260,7 +260,7 @@ def independent_admission(repo, revision, tag, files):
         main_policy = json_document(fetch(baseline, main_revision, 'release-policy.json'))
         policy = json_document(fetch(candidate, revision, 'release-policy.json'))
         for key in ('schema_version', 'repository', 'component', 'line', 'version_files'):
-            require(policy.get(key) == main_policy.get(key), 'Tagged policy differs from current owning policy: ' + key)
+            require(same_json(policy.get(key), main_policy.get(key)), 'Tagged policy differs from current owning policy: ' + key)
         versions = policy.get('version_files')
         require(isinstance(versions, list) and 0 < len(versions) <= 32 and len(versions) == len(set(versions)), 'Invalid owning version inventory')
         for relative in versions:
@@ -304,14 +304,22 @@ def independent_admission(repo, revision, tag, files):
             raw = files.get('container-provenance.json')
             require(raw is not None, 'Tested container provenance is required')
             proof = json.loads(raw)
-            require(proof == {'schema_version': 1, 'repository': repo, 'revision': revision,
-                             'version': accepted_version, 'artifact': artifact}, 'Tested container provenance differs from candidate')
+            require(same_json(proof, {'schema_version': 1, 'repository': repo, 'revision': revision,
+                             'version': accepted_version, 'artifact': artifact}), 'Tested container provenance differs from candidate')
         return main_revision
 
 
 def qualified_run(repo, workflow, revision):
-    query = urlencode(dict(branch='main', event='push', head_sha=revision, per_page=100))
-    runs = api(f'repos/{repo}/actions/workflows/{quote(workflow, safe="")}/runs?{query}')['workflow_runs']
+    runs = []
+    for page in range(1, 101):
+        query = urlencode(dict(branch='main', event='push', head_sha=revision, per_page=100, page=page))
+        batch = api(f'repos/{repo}/actions/workflows/{quote(workflow, safe="")}/runs?{query}')['workflow_runs']
+        require(isinstance(batch, list) and len(batch) <= 100, 'Invalid validation run inventory')
+        runs.extend(run for run in batch if run.get('head_sha') == revision)
+        if len(batch) < 100:
+            break
+    else:
+        raise ValueError('Validation run inventory exceeds limit')
     require(runs, 'No main validation run for this tag revision')
     run = max(runs, key=lambda item: item['id'])
     validate_run(run, repo, workflow, revision)
