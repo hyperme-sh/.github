@@ -28,6 +28,9 @@ def manifest():
 
 class BundleTests(unittest.TestCase):
     def setUp(self):
+        policy = patch.object(b.r, 'policy_configured', return_value=False)
+        self.policy_configured = policy.start()
+        self.addCleanup(policy.stop)
         stub = patch.object(b, 'stable_exists', return_value=False)
         self.stable_exists = stub.start()
         self.addCleanup(stub.stop)
@@ -140,6 +143,16 @@ class BundleTests(unittest.TestCase):
              patch.object(b.r, 'tag_revision', return_value='b'*40), patch.object(b.r, 'publish') as publish:
             with self.assertRaisesRegex(ValueError,'already points elsewhere'): b.promote(REPO,'0.24.0-test.0')
         publish.assert_not_called()
+
+    def test_component_policy_prevents_stable_bundle_namespace_collision(self):
+        self.policy_configured.return_value = True
+        with patch.object(b, 'configuration', return_value=CONFIG), \
+             patch.object(b, 'verify_test', return_value=(SHA, PAYLOAD)), \
+             patch.object(b.r, 'publish') as publish:
+            with self.assertRaisesRegex(ValueError, 'Component repositories cannot promote'):
+                b.promote(REPO, '0.24.0-test.0')
+        publish.assert_not_called()
+        self.policy_configured.assert_called_once_with(REPO, SHA)
 
     def test_promotion_requires_explicit_dispatch_on_main(self):
         with tempfile.TemporaryDirectory() as directory:

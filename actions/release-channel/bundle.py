@@ -110,6 +110,8 @@ def publish_test(repo, event):
 def promote(repo, tag):
     config = configuration(repo, 'main')
     revision, files = verify_test(repo, tag, config)
+    r.require(not r.policy_configured(repo, revision),
+              'Component repositories cannot promote bundle labels; select these artifacts in the coordinator instead')
     # Keep even the provenance manifest unchanged: it records the test origin.
     # Stable selection is expressed by the destination GitHub release/tag.
     stable = config['next']

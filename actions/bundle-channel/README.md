@@ -29,6 +29,14 @@ artifacts and qualified dependency locks, not infer package versions from labels
 This action does not publish to package indexes, deploy services, select a gold
 candidate or establish cross-component/runtime/provider acceptance.
 
+Stable bundle promotion is confined to the coordinator/template repository,
+which has no component `release-policy.json`. The publisher rejects promotion
+when either the selected source or current main has a component package policy.
+Component repositories may publish test bundles, but their stable package
+namespace and accepted baseline remain owned by the existing package publisher.
+The coordinator must explicitly assemble and qualify component artifacts before
+it can promote them as a plane bundle.
+
 For explicit promotion, invoke `mode: promote` only through `workflow_dispatch`
 on main with the input `gold_test` set to an exact tag such as `0.24.0-test.7`.
 The destination is the current declared `next`, here `0.24.0`, without a `v`
