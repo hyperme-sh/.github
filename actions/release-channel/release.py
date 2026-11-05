@@ -1,19 +1,25 @@
 """Publish immutable GitHub package snapshots without executing repository code."""
 import hashlib
+import base64
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import tempfile
 import time
 from urllib.parse import urlencode
+from urllib.parse import quote
 import zipfile
+
+from stable_policy import component_release
+from stable_policy.policy import json_document
 
 ARTIFACT = 'tested-dist'
 MANIFEST = 'release-manifest.json'
 MAX_BYTES = 512 * 1024 * 1024
+MAX_METADATA_BYTES = 4 * 1024 * 1024
 
 
 def require(condition, message):
@@ -201,52 +207,121 @@ def admission_evidence(repo, revision, tag, attempts=30):
     raise ValueError('No completed compatibility evidence for this exact tag and commit')
 
 
+def source_file(repo, revision, relative):
+    path = PurePosixPath(relative)
+    require(isinstance(relative, str) and len(relative) <= 512 and not path.is_absolute()
+            and '..' not in path.parts and '.git' not in path.parts, 'Unsafe release metadata path')
+    result = api(f'repos/{repo}/contents/{quote(relative, safe="/")}?' + urlencode({'ref': revision}))
+    require(result.get('type') == 'file' and result.get('encoding') == 'base64', 'Release metadata must be a regular file')
+    require(type(result.get('size')) is int and 0 <= result['size'] <= MAX_METADATA_BYTES, 'Release metadata exceeds limit')
+    raw = base64.b64decode(''.join(result['content'].splitlines()), validate=True)
+    require(len(raw) == result['size'], 'Release metadata size mismatch')
+    return raw
+
+
+def latest_stable(repo):
+    releases = []
+    for page in range(1, 101):
+        batch = api(f'repos/{repo}/releases?per_page=100&page={page}')
+        require(isinstance(batch, list) and len(batch) <= 100, 'Invalid release inventory')
+        for release in batch:
+            require(type(release.get('draft')) is bool and type(release.get('prerelease')) is bool,
+                    'Incomplete release channel evidence')
+            if release['draft'] or release['prerelease']:
+                continue
+            tag = release.get('tag_name', '')
+            require(re.fullmatch(r'v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', tag),
+                    'Unrecognized stable release tag')
+            releases.append((tuple(map(int, tag[1:].split('.'))), release))
+        if len(batch) < 100:
+            require(releases, 'No actual stable release; test snapshots are not a bootstrap baseline')
+            return max(releases, key=lambda item: item[0])[1]
+    raise ValueError('Stable release inventory exceeds limit')
+
+
+def independent_admission(repo, revision, tag, files):
+    """Re-run pinned policy on data, independently of caller job names/flags."""
+    main_revision = api(f'repos/{repo}/commits/main').get('sha')
+    require(isinstance(main_revision, str) and re.fullmatch('[0-9a-f]{40}', main_revision), 'Immutable main policy revision required')
+    with tempfile.TemporaryDirectory(prefix='stable-admission-') as temporary:
+        root = Path(temporary)
+        baseline, candidate = root/'baseline', root/'candidate'
+        remaining = MAX_METADATA_BYTES
+        def fetch(destination, ref, relative):
+            nonlocal remaining
+            raw = source_file(repo, ref, relative)
+            remaining -= len(raw)
+            require(remaining >= 0, 'Release metadata inventory exceeds limit')
+            target = destination/relative
+            require(target.resolve().is_relative_to(destination.resolve()), 'Release metadata escapes snapshot')
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(raw)
+            return target
+        main_policy = json_document(fetch(baseline, main_revision, 'release-policy.json'))
+        policy = json_document(fetch(candidate, revision, 'release-policy.json'))
+        for key in ('schema_version', 'repository', 'component', 'line', 'version_files'):
+            require(policy.get(key) == main_policy.get(key), 'Tagged policy differs from current owning policy: ' + key)
+        versions = policy.get('version_files')
+        require(isinstance(versions, list) and 0 < len(versions) <= 32 and len(versions) == len(set(versions)), 'Invalid owning version inventory')
+        for relative in versions:
+            fetch(candidate, revision, relative)
+        def bundle(destination, ref, folder):
+            document = json_document(fetch(destination, ref, folder+'/release.json'))
+            components = document.get('components')
+            require(isinstance(components, dict) and len(components) == 1, 'Expected one owning component')
+            for component in components.values():
+                contract = component.get('contract')
+                require(isinstance(contract, str), 'Release contract path required')
+                fetch(destination, ref, folder+'/'+contract)
+            return document
+        bundle(baseline, main_revision, 'releases/accepted')
+        provenance = json_document(fetch(baseline, main_revision, 'releases/accepted/provenance.json'))
+        require(provenance.get('release_id') == latest_stable(repo).get('id'),
+                'Current main does not record the latest actual stable release')
+        declared = bundle(candidate, revision, 'releases/candidate')
+        accepted_version = component_release.admit(candidate, baseline, repo, policy['line'], tag)
+        artifact = declared['components'][policy['component']]['artifact']
+        if artifact['kind'] == 'package':
+            require('sha256:' + artifact['sha256'] in {digest(data) for data in files.values()}, 'Candidate does not identify an actual tested artifact')
+        else:
+            raw = files.get('container-provenance.json')
+            require(raw is not None, 'Tested container provenance is required')
+            proof = json.loads(raw)
+            require(proof == {'schema_version': 1, 'repository': repo, 'revision': revision,
+                             'version': accepted_version, 'artifact': artifact}, 'Tested container provenance differs from candidate')
+        return main_revision
+
+
+def qualified_run(repo, workflow, revision):
+    query = urlencode(dict(branch='main', event='push', head_sha=revision, per_page=100))
+    runs = api(f'repos/{repo}/actions/workflows/{quote(workflow, safe="")}/runs?{query}')['workflow_runs']
+    require(runs, 'No main validation run for this tag revision')
+    run = max(runs, key=lambda item: item['id'])
+    validate_run(run, repo, workflow, revision)
+    return run['id']
+
+
 def main():
     repo = os.environ['GITHUB_REPOSITORY']
     workflow = os.environ['VALIDATION_WORKFLOW']
-    event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
     event_name = os.environ['GITHUB_EVENT_NAME']
-    if event_name == 'workflow_run':
-        run = event['workflow_run']
-        revision, run_id = run['head_sha'], run['id']
-        validate_run(run, repo, workflow, revision)
-        artifact_id, files = tested_files(repo, workflow, revision, run_id)
-        tag = f'test-{revision}'
-        manifest = dict(schema=1, repository=repo, channel='test', tag=tag,
-                        revision=revision, workflow=workflow, run_id=run_id,
-                        artifact_id=artifact_id,
-                        assets={name: digest(data) for name, data in sorted(files.items())})
-        prerelease = True
-    else:
-        require(event_name == 'push', 'Unsupported release event')
-        ref = os.environ['GITHUB_REF']
-        require(re.fullmatch(r'refs/tags/v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', ref),
-                'Stable tags must be vMAJOR.MINOR.PATCH')
-        tag = ref.removeprefix('refs/tags/')
-        revision = tag_revision(repo, tag)
-        admission_run_id = admission_evidence(repo, revision, tag)
-        candidate = release_by_tag(repo, f'test-{revision}')
-        require(candidate and candidate.get('immutable') and candidate['prerelease']
-                and not candidate['draft'], 'No immutable test release for tag revision')
-        require(tag_revision(repo, candidate['tag_name']) == revision, 'Test tag moved')
-        assets = release_files(repo, candidate)
-        manifest = json.loads(assets.pop(MANIFEST))
-        require(set(manifest) == {'schema', 'repository', 'channel', 'tag', 'revision',
-                                 'workflow', 'run_id', 'artifact_id', 'assets'}, 'Invalid manifest fields')
-        require(manifest['schema'] == 1 and manifest['repository'] == repo
-                and manifest['revision'] == revision and manifest['workflow'] == workflow
-                and manifest['channel'] == 'test' and manifest['tag'] == candidate['tag_name'],
-                'Test manifest identity mismatch')
-        _, files = tested_files(repo, workflow, revision, manifest['run_id'], manifest['artifact_id'])
-        require(files == assets, 'Release differs from successful Actions artifact')
-        require(manifest['assets'] == {name: digest(data) for name, data in files.items()},
-                'Test manifest asset digest mismatch')
-        manifest.update(channel='prod', tag=tag)
-        if admission_run_id is not None:
-            manifest['admission_run_id'] = admission_run_id
-        prerelease = False
+    require(event_name == 'push', 'Automatic test release publication is disabled; qualify Actions artifacts instead')
+    ref = os.environ['GITHUB_REF']
+    require(re.fullmatch(r'refs/tags/v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', ref),
+            'Stable tags must be vMAJOR.MINOR.PATCH')
+    tag = ref.removeprefix('refs/tags/')
+    revision = tag_revision(repo, tag)
+    admission_run_id = admission_evidence(repo, revision, tag)
+    run_id = qualified_run(repo, workflow, revision)
+    artifact_id, files = tested_files(repo, workflow, revision, run_id)
+    manifest = dict(schema=1, repository=repo, channel='prod', tag=tag, revision=revision,
+                    workflow=workflow, run_id=run_id, artifact_id=artifact_id,
+                    assets={name: digest(data) for name, data in sorted(files.items())})
+    if admission_run_id is not None:
+        manifest['policy_baseline_revision'] = independent_admission(repo, revision, tag, files)
+        manifest['admission_run_id'] = admission_run_id
     files[MANIFEST] = (json.dumps(manifest, sort_keys=True, indent=2) + '\n').encode()
-    publish(repo, tag, revision, files, prerelease)
+    publish(repo, tag, revision, files, False)
 
 
 if __name__ == '__main__':
