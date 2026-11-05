@@ -20,3 +20,27 @@ jobs:
           python-version: '3.12'
       - run: python3 actions/release-channel/verify_policy_vendor.py .policy-source
       - run: python3 -m unittest discover -s actions/release-channel -p 'test_*.py' -v
+
+  debian-python:
+    runs-on: ubuntu-24.04
+    container: debian:13-slim
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: hyperme-sh/spanopticon
+          ref: 7f5b9b21363d41b8f8ed14571195d10f4a11899f
+          path: .policy-source
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        with:
+          version: '0.11.26'
+          enable-cache: false
+      - name: Verify publisher on managed Python in Debian 13
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          uv run --no-project --no-config --managed-python --python 3.12 python "$GITHUB_WORKSPACE/actions/release-channel/verify_policy_vendor.py" "$GITHUB_WORKSPACE/.policy-source"
+          uv run --no-project --no-config --managed-python --python 3.12 python -m unittest discover -s "$GITHUB_WORKSPACE/actions/release-channel" -p 'test_*.py' -v
