@@ -1,74 +1,50 @@
-# Package release channels
+# Stable package publication
 
-Use this action at an exact reviewed commit. It requires only the caller's
-`GITHUB_TOKEN` (`contents: write`, `actions: read`), Python 3 and GitHub CLI on an
-isolated Ubuntu runner. It never checks out or executes the caller's source or
-packages. Keep validation jobs read-only and scoped dependency credentials there.
+Use this action at an exact reviewed commit on an isolated Ubuntu runner with
+GitHub CLI and the caller's repository-scoped `GITHUB_TOKEN`
+(`contents: write`, `actions: read`). Validation jobs retain read-only permissions
+and any private dependency credentials. The publisher never checks out or
+executes the caller's source, packages or metadata scripts.
+The action provisions Python 3.12 before importing its bundled policy, including
+on runners whose system Python predates Python 3.11 and `tomllib`.
 
-A successful **push to main** validation workflow uploads a single flat
-`tested-dist` Actions artifact, after all source, wheel, sdist and installed tests
-pass. Preserve the actual tested artifacts; do not rebuild for publication.
-Configure upload-artifact with `if-no-files-found: error` and 90-day retention.
-A separate `workflow_run: completed` publisher invokes this action with the
-validation workflow's exact repository-relative path. It checks the run identity,
-conclusion and original artifact digest before publishing `test-<commit>` as an
-immutable prerelease. Workflow-dispatch and PR checks are not release candidates.
+Main validation retains its exact tested files in one flat `tested-dist` Actions
+artifact after the owning source, wheel, sdist and consumer checks. Main merges,
+PRs and workflow completion events do not create GitHub releases or tags. Existing
+historical `test-<commit>` snapshots remain qualification evidence, and do not
+reserve their embedded stable package version.
 
-A `push: tags: ['v*']` publisher invokes the same action. Only `vMAJOR.MINOR.PATCH`
-is accepted. The tag must point to a commit with an immutable test release. The
-publisher downloads that candidate AND its original successful Actions artifact,
-checks exact byte equality, and publishes the unchanged package files with a
-production manifest. It does not run a package manager or rebuild anything.
-GitHub release tags identify snapshots; they do not rewrite package metadata or
-publish to PyPI/npm. A service contract wheel is still a contract wheel, not a
-qualified OCI runtime. Deployment adapters must understand the artifact type.
+An explicit `push: tags: ['v*']` publisher accepts only `vMAJOR.MINOR.PATCH`. It
+resolves the tag source, selects the newest main-push validation attempt for that
+exact source and verifies its successful identity, artifact digest and bytes.
+It publishes those unchanged files with a stable provenance manifest; it neither
+rebuilds them nor publishes to PyPI/npm. Expired/missing Actions artifacts fail
+closed. Repository/organization retention may shorten the requested 90 days.
 
-Enable **immutable releases** in the caller repository before the first run.
-The publisher verifies the immutable flag on the resulting release; repository
-settings audits use operator authority separately because the settings endpoint
-requires administration access that GITHUB_TOKEN intentionally does not have.
-If immutability is disabled, publication fails verification and the resulting
-mutable release is not an accepted candidate; investigate before retrying.
-Private repositories and their assets remain private. No public attestation,
-new App, credential, or reviewer gate is required. Immutable publication uses a
-draft followed by asset upload and final publication. An interrupted draft is
-left unpublished for inspection; remove that draft and retry after diagnosis.
-Completed identical publications are idempotent; differing bytes are rejected.
-A rerun that changes a previously published test snapshot is deliberately rejected.
+For a component with release policy, the exact tag's automated compatibility run
+must succeed. The publisher also independently re-runs its pinned, bundled policy
+on data read from GitHub: the current main's stable accepted record and policy,
+and the tagged candidate's metadata, version sources and contracts. Candidate
+version-source redirection is refused. The baseline must be an actual immutable,
+non-draft/non-prerelease stable release with a matching tag source and published
+asset digests. Package candidates must identify actual tested bytes; container
+candidates require matching tested image provenance. Successful-looking caller
+jobs cannot replace these checks. Bundled policy is compared in CI with its exact
+reviewed upstream source.
 
-## Evidence lifetime
+A missing accepted stable baseline remains closed. First stable bootstrap and
+coordinated release readiness are separate explicit release work; a test snapshot
+is never installed as a substitute. No human reviewer, environment approval or
+branch protection is required by this action.
 
-Promote within the Actions artifact retention period (normally 90 days; repository
-or organization policy can shorten it). Expired or deleted evidence fails closed;
-validate a new main revision to obtain a new candidate. Immutable release assets
-alone are **not** proof of successful testing, even if their manifest names a green
-run. Production release assets remain retained after promotion. Consumers must
-retain their accepted source/digest receipt and never silently accept a changed
-version. This action does not itself deploy or establish service health.
+Immutable release settings must already be configured. Publication uses a draft,
+asset upload and final publication, then verifies the result's immutability, tag
+source and bytes. Existing identical results are preserved; replacement bytes are
+refused. Interrupted drafts remain unpublished for diagnosis. This action does
+not deploy services, qualify provider behavior or establish runtime health.
 
-## Consumer workflow
-
-Use one publisher workflow with triggers for the validation workflow's completion
-and stable tag pushes, contents-write/actions-read permissions, and a repository
-release concurrency group keyed by source revision/tag, with cancellation disabled
-(so separate main merges do not evict one another from the pending queue). Gate workflow_run publication
-on successful main push events. The action repeats these checks against the API.
-Do not grant write tokens to validation jobs or execute downloaded package code in
-the publisher. Repositories with selected-action policies must allow the exact
-upload-artifact and release action SHAs before enabling these workflows.
-
-### Automated compatibility evidence
-
-Before stable publication, the publisher checks for `release-policy.json` in both
-the tagged revision and current main. If either declares a component policy,
-the separate `release-admission.yml` push run for the exact tag and commit must
-succeed, including its Release compatibility job. Configuration-only success,
-skipped compatibility, fork runs and older green attempts cannot substitute.
-The publisher waits up to 150 seconds for independent admission and fails if
-it does not complete successfully. Retrying publication after successful admission
-is safe. The production manifest records the admission run ID.
-
-This check also applies when a caller omits its job dependency or tags an older
-workflow revision. Retain the caller dependency for scheduling and early failure.
-These are automated artifact checks; no required reviewer, environment approval
-or branch protection is needed.
+Retries of a completed immutable release verify its original validation artifact,
+exact admission run attempt and recorded baseline snapshot. They recheck the
+preceding stable version for that release and preserve the original manifest,
+without publishing again or requiring main's accepted pointer to stay behind.
+Missing or expired original evidence still fails verification closed.

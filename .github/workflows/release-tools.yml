@@ -9,4 +9,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: hyperme-sh/spanopticon
+          ref: 60e605ff39923c61bccc6c732181f82e557be35a
+          path: .policy-source
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - run: python3 actions/release-channel/verify_policy_vendor.py .policy-source
       - run: python3 -m unittest discover -s actions/release-channel -p 'test_*.py' -v

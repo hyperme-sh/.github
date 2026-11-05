@@ -23,10 +23,10 @@ class AdmissionTests(unittest.TestCase):
             return r.admission_evidence(self.repo, self.revision, self.tag, attempts=1)
 
     def test_exact_admission_is_recorded(self):
-        self.assertEqual(self.evidence(), 12)
+        self.assertEqual(self.evidence(), (12, 2))
 
     def test_policy_on_main_still_applies_to_older_tags(self):
-        self.assertEqual(self.evidence(current_only=True), 12)
+        self.assertEqual(self.evidence(current_only=True), (12, 2))
         with self.assertRaises(ValueError):
             self.evidence(current_only=True, job='skipped')
 
