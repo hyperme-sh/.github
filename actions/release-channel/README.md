@@ -1,12 +1,15 @@
 # Stable package publication
 
-Use this action at an exact reviewed commit on an isolated Ubuntu runner with
+Use this action at an exact reviewed commit on an isolated Linux runner (including Debian 13) with
 GitHub CLI and the caller's repository-scoped `GITHUB_TOKEN`
 (`contents: write`, `actions: read`). Validation jobs retain read-only permissions
 and any private dependency credentials. The publisher never checks out or
 executes the caller's source, packages or metadata scripts.
-The action provisions Python 3.12 before importing its bundled policy, including
-on runners whose system Python predates Python 3.11 and `tomllib`.
+The action provisions managed Python 3.12 through pinned uv before importing its
+bundled policy. It runs outside the caller checkout, with project and uv config
+discovery disabled; caller dependencies and scripts are never installed. This
+supports Debian debrunners without relying on setup-python Ubuntu binaries or
+the system Python version.
 
 Main validation retains its exact tested files in one flat `tested-dist` Actions
 artifact after the owning source, wheel, sdist and consumer checks. Main merges,
