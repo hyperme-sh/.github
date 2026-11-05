@@ -1,4 +1,5 @@
 """Publish immutable GitHub package snapshots without executing repository code."""
+import base64
 import hashlib
 import io
 import json
@@ -158,7 +159,7 @@ def publish(repo, tag, revision, files, prerelease):
     require(release_files(repo, release) == files, 'Published release bytes mismatch')
 
 
-def admission_evidence(repo, revision, tag, attempts=30):
+def admission_evidence(repo, revision, tag, attempts=30, *, include_mode=False):
     """A configured compatibility policy must pass even if caller wiring is absent."""
     configured = False
     # Current main also applies: tagging older workflow code cannot escape a
@@ -169,7 +170,7 @@ def admission_evidence(repo, revision, tag, attempts=30):
                 'Cannot establish complete repository policy inventory')
         configured |= any(item['name'] == 'release-policy.json' for item in entries)
     if not configured:
-        return None
+        return (None, False) if include_mode else None
     query = urlencode(dict(branch=tag, event='push', head_sha=revision, per_page=100))
     for attempt in range(attempts):
         runs = api(f'repos/{repo}/actions/workflows/release-admission.yml/runs?{query}')['workflow_runs']
@@ -192,13 +193,59 @@ def admission_evidence(repo, revision, tag, attempts=30):
                     if len(batch) < 100:
                         break
                     page += 1
-                compatibility = [job for job in jobs if job['name'].endswith('/ Release compatibility')]
-                require(len(compatibility) == 1 and compatibility[0]['conclusion'] == 'success',
-                        'Successful configuration alone is not release compatibility')
-                return run['id']
+                compatibility = [job for job in jobs if job['name'].endswith('/ Release compatibility')
+                                 and job['conclusion'] == 'success']
+                initial = [job for job in jobs if job['name'].endswith('/ Initial release admission')
+                           and job['conclusion'] == 'success']
+                require(len(compatibility) + len(initial) == 1 and (include_mode or compatibility),
+                        'Successful configuration alone is not release compatibility or initial admission')
+                return (run['id'], bool(initial)) if include_mode else run['id']
         if attempt + 1 < attempts:
             time.sleep(5)
     raise ValueError('No completed compatibility evidence for this exact tag and commit')
+
+
+def initial_publication(repo, revision, tag, files):
+    """Bind tested bytes and atomically reserve the first stable source.
+
+    The durable Git ref prevents two differently sourced tags from both passing
+    an empty-release-list check. Retrying the same source is safe; the candidate
+    version binds its sole allowed stable tag. No settings or approvals are added.
+    """
+    require(re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo)
+            and re.fullmatch(r'[0-9a-f]{40}', revision), 'Invalid initial source identity')
+    response = api(f'repos/{repo}/contents/releases/candidate/release.json?' + urlencode({'ref': revision}))
+    require(response.get('encoding') == 'base64', 'Unsupported candidate encoding')
+    bundle = json.loads(base64.b64decode(response['content'], validate=False))
+    owner = repo.split('/')[1]
+    require(bundle.get('schema_version') == 1 and set(bundle.get('components', {})) == {owner},
+            'Initial candidate owner mismatch')
+    component = bundle['components'][owner]
+    require(tag == 'v' + component['version'], 'Initial candidate tag mismatch')
+    artifact = component['artifact']
+    require(artifact['kind'] == 'package' and 'sha256:' + artifact['sha256'] in
+            {digest(data) for data in files.values()}, 'Initial candidate is not a tested package asset')
+    for page in range(1, 101):
+        releases = api(f'repos/{repo}/releases?per_page=100&page={page}')
+        require(isinstance(releases, list) and len(releases) <= 100, 'Incomplete release inventory')
+        require(all(isinstance(item, dict) and item.get('prerelease') is True for item in releases),
+                'Stable release already exists; accepted-baseline admission is required')
+        if len(releases) < 100:
+            break
+    else:
+        raise ValueError('Release inventory exceeds initial-publication limit')
+    ref = 'heads/release/initial-stable'
+    try:
+        gh('api', f'repos/{repo}/git/refs', '--method', 'POST',
+           '-f', 'ref=refs/' + ref, '-f', 'sha=' + revision)
+    except subprocess.CalledProcessError:
+        # A concurrent winner or a prior attempt may own the claim. Any other
+        # failure must still establish the exact reservation via a fresh read.
+        pass
+    claim = api(f'repos/{repo}/git/ref/{ref}')
+    require(claim.get('ref') == 'refs/' + ref and claim.get('object', {}).get('type') == 'commit'
+            and claim['object'].get('sha') == revision,
+            'Another source owns the initial stable publication claim')
 
 
 def main():
@@ -224,7 +271,7 @@ def main():
                 'Stable tags must be vMAJOR.MINOR.PATCH')
         tag = ref.removeprefix('refs/tags/')
         revision = tag_revision(repo, tag)
-        admission_run_id = admission_evidence(repo, revision, tag)
+        admission_run_id, initial = admission_evidence(repo, revision, tag, include_mode=True)
         candidate = release_by_tag(repo, f'test-{revision}')
         require(candidate and candidate.get('immutable') and candidate['prerelease']
                 and not candidate['draft'], 'No immutable test release for tag revision')
@@ -241,6 +288,8 @@ def main():
         require(files == assets, 'Release differs from successful Actions artifact')
         require(manifest['assets'] == {name: digest(data) for name, data in files.items()},
                 'Test manifest asset digest mismatch')
+        if initial:
+            initial_publication(repo, revision, tag, files)
         manifest.update(channel='prod', tag=tag)
         if admission_run_id is not None:
             manifest['admission_run_id'] = admission_run_id

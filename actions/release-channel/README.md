@@ -72,3 +72,19 @@ This check also applies when a caller omits its job dependency or tags an older
 workflow revision. Retain the caller dependency for scheduling and early failure.
 These are automated artifact checks; no required reviewer, environment approval
 or branch protection is needed.
+
+### Initial stable distributions
+
+A successful exact-tag `Initial release admission` job is distinct from backward
+compatibility. The publisher accepts it only in the updated protocol, then checks
+that the candidate package digest is one of the already verified main/test assets
+and that no stable release has appeared since admission. Before publishing it
+atomically claims `refs/heads/release/initial-stable` at the source revision.
+Concurrent initial tags from different revisions cannot both claim publication;
+retries of the same source are allowed. The candidate's version binds the tag.
+
+The claim is a durable ordinary Git ref, not a branch protection or approval gate.
+It is never force-updated by the publisher. Failed unpublished attempts may need
+repair before changing source; do not clear a claim after stable publication.
+Record genuine stable provenance after success and use compatibility admission
+for later releases. Initial mode currently supports package assets only.

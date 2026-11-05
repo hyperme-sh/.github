@@ -8,7 +8,7 @@ from test_release import r
 
 
 class PromotionTests(unittest.TestCase):
-    def exercise(self, asset=b'tested', manifest_changes=None, event='push', ref='refs/tags/v1.2.3'):
+    def exercise(self, asset=b'tested', manifest_changes=None, event='push', ref='refs/tags/v1.2.3', initial=False):
         repo='hyperme-sh/example'
         sha='a'*40
         manifest=dict(schema=1, repository=repo, channel='test', tag='test-'+sha,
@@ -22,15 +22,17 @@ class PromotionTests(unittest.TestCase):
                             VALIDATION_WORKFLOW='.github/workflows/package.yml',
                             GITHUB_EVENT_PATH=str(path), GITHUB_EVENT_NAME=event, GITHUB_REF=ref)), \
                     patch.object(r,'tag_revision',return_value=sha), \
-                    patch.object(r,'admission_evidence',return_value=11) as admission, \
+                    patch.object(r,'admission_evidence',return_value=(11, initial)) as admission, \
                     patch.object(r,'release_by_tag',return_value=dict(
                         immutable=True, prerelease=True, draft=False, tag_name='test-'+sha)), \
                     patch.object(r,'release_files',return_value={
                         r.MANIFEST:json.dumps(manifest).encode(), 'example.whl':asset}), \
                     patch.object(r,'tested_files',return_value=(7,{'example.whl':b'tested'})), \
+                    patch.object(r,'initial_publication') as initial_publication, \
                     patch.object(r,'publish') as publish:
                 r.main()
-                admission.assert_called_once_with(repo, sha, 'v1.2.3')
+                admission.assert_called_once_with(repo, sha, 'v1.2.3', include_mode=True)
+                self.assertEqual(initial_publication.call_count, int(initial))
                 return publish.call_args
 
     def test_promotes_exact_bytes_and_evidence(self):
@@ -59,3 +61,6 @@ class PromotionTests(unittest.TestCase):
                 self.exercise(ref=ref)
         with self.assertRaises(ValueError):
             self.exercise(event='workflow_dispatch')
+
+    def test_initial_mode_claims_before_publishing_tested_bytes(self):
+        self.assertEqual(self.exercise(initial=True).args[3]["example.whl"], b"tested")
