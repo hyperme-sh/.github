@@ -322,10 +322,14 @@ def independent_admission(repo, revision, tag, files, *, baseline_revision=None,
 
 
 def qualified_run(repo, workflow, revision):
+    path = PurePosixPath(workflow)
+    require(path.parent.as_posix() == '.github/workflows' and path.suffix in {'.yml', '.yaml'},
+            'Repository-relative validation workflow path required')
+    identifier = quote(path.name, safe='')
     runs = []
     for page in range(1, 101):
         query = urlencode(dict(branch='main', event='push', head_sha=revision, per_page=100, page=page))
-        batch = api(f'repos/{repo}/actions/workflows/{quote(workflow, safe="")}/runs?{query}')['workflow_runs']
+        batch = api(f'repos/{repo}/actions/workflows/{identifier}/runs?{query}')['workflow_runs']
         require(isinstance(batch, list) and len(batch) <= 100, 'Invalid validation run inventory')
         runs.extend(run for run in batch if run.get('head_sha') == revision)
         if len(batch) < 100:

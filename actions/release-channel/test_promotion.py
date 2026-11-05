@@ -53,8 +53,10 @@ class PromotionTests(unittest.TestCase):
     def test_latest_main_run_is_required_for_exact_source(self):
         run=dict(id=3,repository={'full_name':'hyperme-sh/example'},head_repository={'full_name':'hyperme-sh/example'},
                  head_sha='a'*40,head_branch='main',event='push',path='.github/workflows/package.yml',status='completed',conclusion='success')
-        with patch.object(r,'api',return_value={'workflow_runs':[run]}):
+        with patch.object(r,'api',return_value={'workflow_runs':[run]}) as api:
             self.assertEqual(r.qualified_run('hyperme-sh/example','.github/workflows/package.yml','a'*40),3)
+            self.assertTrue(api.call_args.args[0].startswith('repos/hyperme-sh/example/actions/workflows/package.yml/runs?'))
+            self.assertNotIn('%2F',api.call_args.args[0])
         for invalid in [[],[{**run,'head_sha':'b'*40}],[run,{**run,'id':4,'status':'in_progress'}]]:
             with self.subTest(invalid=invalid),patch.object(r,'api',return_value={'workflow_runs':invalid}),self.assertRaises(ValueError):
                 r.qualified_run('hyperme-sh/example','.github/workflows/package.yml','a'*40)
