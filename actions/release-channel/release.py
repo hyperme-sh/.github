@@ -7,6 +7,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+import tarfile
 import tempfile
 import time
 from urllib.parse import urlencode
@@ -92,6 +93,43 @@ def tested_files(repo, workflow, revision, run_id, artifact_id=None):
     data = gh('api', f"{base}/actions/artifacts/{artifact['id']}/zip", binary=True)
     require(artifact.get('digest') == digest(data), 'Actions artifact digest mismatch')
     return artifact['id'], unpack(data)
+
+
+def registry_files(repo, workflow, revision, run_id, attempt=None, expected=None):
+    base = f'repos/{repo}/actions/runs/{run_id}'
+    run = api(base if attempt is None else f'{base}/attempts/{attempt}')
+    validate_run(run, repo, workflow, revision)
+    attempt = run['run_attempt']
+    jobs = api(f'{base}/attempts/{attempt}/jobs?per_page=100')
+    require(len(jobs['jobs']) == jobs['total_count'], 'Incomplete validation job inventory')
+    identities = [j['name'].removeprefix('Qualified OCI ') for j in jobs['jobs']
+                  if j['name'].startswith('Qualified OCI ') and j['conclusion'] == 'success']
+    require(len(identities) == 1 and re.fullmatch(r'sha256:[0-9a-f]{64}', identities[0]),
+            'Successful validation must record exactly one OCI digest')
+    digest_id = identities[0]
+    require(expected is None or expected == digest_id, 'Original registry digest changed')
+    ref = f'ghcr.io/{repo.lower()}/runtime@{digest_id}'
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {**os.environ, 'DOCKER_CONFIG': tmp}
+        def docker(*args, **kwargs):
+            return subprocess.run(['docker', *args], env=env, check=True, timeout=600, **kwargs)
+        docker('login', 'ghcr.io', '--username', os.environ['GITHUB_ACTOR'], '--password-stdin',
+               input=os.environ['GH_TOKEN'].encode(), stdout=subprocess.DEVNULL)
+        docker('pull', ref, stdout=subprocess.DEVNULL)
+        container = docker('create', '--network', 'none', ref, stdout=subprocess.PIPE).stdout.decode().strip()
+        try:
+            with tempfile.TemporaryFile() as stream:
+                docker('cp', container+':/qualified/tested-dist.zip', '-', stdout=stream)
+                require(stream.tell() <= MAX_BYTES + 10240, 'Registry package archive too large')
+                stream.seek(0)
+                with tarfile.open(fileobj=stream) as archive:
+                    members = archive.getmembers()
+                    require(len(members) == 1 and members[0].isreg() and members[0].name == 'tested-dist.zip'
+                            and members[0].size <= MAX_BYTES, 'Unexpected registry package payload')
+                    files = unpack(archive.extractfile(members[0]).read())
+        finally:
+            docker('rm', '-v', container, stdout=subprocess.DEVNULL)
+    return digest_id, attempt, files
 
 
 def release_by_tag(repo, tag):
@@ -397,6 +435,10 @@ def verify_existing_publication(repo, tag, revision, workflow, release):
     require(isinstance(manifest, dict) and raw == (json.dumps(manifest, sort_keys=True, indent=2)+'\n').encode(),
             'Stable publication manifest is not canonical')
     required = {'schema', 'repository', 'channel', 'tag', 'revision', 'workflow', 'run_id', 'artifact_id', 'assets'}
+    registry = manifest.get('schema') == 2
+    if registry:
+        required.remove('artifact_id')
+        required.update(('image_digest','validation_attempt'))
     configured = policy_configured(repo, revision)
     initial = manifest.get('initial_release') is True
     if initial:
@@ -404,11 +446,11 @@ def verify_existing_publication(repo, tag, revision, workflow, release):
         required.add('initial_release')
     if configured:
         required |= {'admission_run_id', 'admission_run_attempt', 'policy_baseline_revision'}
-    require(set(manifest) == required and type(manifest.get('schema')) is int and manifest['schema'] == 1
+    require(set(manifest) == required and type(manifest.get('schema')) is int and manifest['schema'] in (1, 2)
             and manifest['repository'] == repo and manifest['channel'] == 'prod'
             and manifest['tag'] == tag and manifest['revision'] == revision and manifest['workflow'] == workflow,
             'Stable publication identity mismatch')
-    for key in ('run_id', 'artifact_id'):
+    for key in ('run_id', 'validation_attempt' if registry else 'artifact_id'):
         require(type(manifest[key]) is int and manifest[key] > 0, 'Invalid original artifact identity')
     require(manifest['assets'] == {name: digest(data) for name, data in files.items()}, 'Stable publication asset digest mismatch')
     if configured:
@@ -421,7 +463,10 @@ def verify_existing_publication(repo, tag, revision, workflow, release):
             initial_source_claim(repo, revision, existing=True)
         else:
             require(check_admission_record(repo, revision, tag, original) == (run_id, attempt), 'Original admission attempt differs')
-    _, tested = tested_files(repo, workflow, revision, manifest['run_id'], manifest['artifact_id'])
+    if registry:
+        _, _, tested = registry_files(repo, workflow, revision, manifest['run_id'], manifest['validation_attempt'], manifest['image_digest'])
+    else:
+        _, tested = tested_files(repo, workflow, revision, manifest['run_id'], manifest['artifact_id'])
     require(tested == files, 'Existing stable bytes differ from original tested artifact')
     if configured:
         baseline = manifest['policy_baseline_revision']
@@ -448,9 +493,14 @@ def main():
         return
     admission_run_id = admission_evidence(repo, revision, tag, include_mode=True)
     run_id = qualified_run(repo, workflow, revision)
-    artifact_id, files = tested_files(repo, workflow, revision, run_id)
-    manifest = dict(schema=1, repository=repo, channel='prod', tag=tag, revision=revision,
-                    workflow=workflow, run_id=run_id, artifact_id=artifact_id,
+    if os.environ.get('PACKAGE_SOURCE') == 'ghcr':
+        image_digest, attempt, files = registry_files(repo, workflow, revision, run_id)
+        provenance = dict(schema=2, image_digest=image_digest, validation_attempt=attempt)
+    else:
+        artifact_id, files = tested_files(repo, workflow, revision, run_id)
+        provenance = dict(schema=1, artifact_id=artifact_id)
+    manifest = dict(**provenance, repository=repo, channel='prod', tag=tag, revision=revision,
+                    workflow=workflow, run_id=run_id,
                     assets={name: digest(data) for name, data in sorted(files.items())})
     if admission_run_id is not None:
         run, attempt, initial = admission_run_id
