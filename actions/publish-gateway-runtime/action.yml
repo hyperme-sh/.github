@@ -1,0 +1,56 @@
+name: Publish qualified gateway runtime
+description: Copy a digest-bound same-run gateway image to GHCR from a clean publisher job.
+inputs:
+  cache-key:
+    required: true
+    description: Exact same-run transfer key produced by the qualification job
+  archive-sha256:
+    required: true
+    description: SHA-256 of the qualified docker-save archive
+outputs:
+  digest:
+    description: Verified GHCR manifest digest
+    value: ${{ steps.publish.outputs.digest }}
+runs:
+  using: composite
+  steps:
+    - name: Require the trusted gateway main push
+      shell: bash
+      run: |
+        [[ "$GITHUB_WORKFLOW_REF" == 'hyperme-sh/hypermesh-gateway/.github/workflows/package.yml@refs/heads/main' ]]
+        [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ]]
+    - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        key: ${{ inputs.cache-key }}
+        path: .gateway-transfer/image.tar
+        fail-on-cache-miss: true
+    - id: publish
+      shell: bash
+      env:
+        EXPECTED: ${{ inputs.archive-sha256 }}
+        GHCR_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        [[ "$EXPECTED" =~ ^[a-f0-9]{64}$ ]]
+        dir="$GITHUB_WORKSPACE/.gateway-transfer"
+        archive="$dir/image.tar"
+        [[ -f "$archive" && ! -L "$archive" ]]
+        printf '%s  %s\n' "$EXPECTED" "$archive" | sha256sum --check --status
+        local_ref="docker-archive:$archive"
+        skopeo inspect --config "$local_ref" | jq -e --arg sha "$GITHUB_SHA" '
+          .os=="linux" and .architecture=="amd64" and
+          .config.Labels["org.opencontainers.image.source"]=="https://github.com/hyperme-sh/hypermesh-gateway" and
+          .config.Labels["org.opencontainers.image.revision"]==$sha' >/dev/null
+        private=$(mktemp -d "$RUNNER_TEMP/publisher.XXXXXX")
+        trap 'rm -rf -- "$private" "$dir"' EXIT
+        auth="$private/auth.json"
+        printf '%s' "$GHCR_TOKEN" | skopeo login --authfile "$auth" --username "$GITHUB_ACTOR" --password-stdin ghcr.io
+        repo=ghcr.io/hyperme-sh/hypermesh-gateway/runtime
+        skopeo copy --authfile "$auth" --digestfile "$private/digest" "$local_ref" "docker://$repo:sha-$GITHUB_SHA"
+        digest=$(cat "$private/digest")
+        [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+        skopeo inspect --authfile "$auth" --raw "docker://$repo@$digest" > "$private/manifest"
+        printf '%s  %s\n' "${digest#sha256:}" "$private/manifest" | sha256sum --check --status
+        skopeo copy --authfile "$auth" "docker://$repo@$digest" "oci:$private/pulled:qualified"
+        test "$(skopeo inspect --config "$local_ref" | sha256sum)" = "$(skopeo inspect --config "oci:$private/pulled:qualified" | sha256sum)"
+        echo "digest=$digest" >> "$GITHUB_OUTPUT"

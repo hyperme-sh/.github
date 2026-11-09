@@ -1,0 +1,39 @@
+name: Publish CI receipt
+description: Store one credential-free JSON receipt and verify its digest-addressed contents
+inputs:
+  name:
+    required: true
+    description: Receipt type
+  receipt:
+    required: true
+    description: Compact JSON object from the read-only job
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        NAME: ${{ inputs.name }}
+        RECEIPT: ${{ inputs.receipt }}
+        GHCR_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        [[ "$GITHUB_REF" == refs/heads/main && "$NAME" =~ ^[a-z][a-z0-9-]+$ ]]
+        work=$(mktemp -d "$RUNNER_TEMP/receipt.XXXXXX")
+        export DOCKER_CONFIG="$work/auth"
+        mkdir "$DOCKER_CONFIG" "$work/context"
+        image="ghcr.io/${GITHUB_REPOSITORY,,}/ci-evidence:$NAME-$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+        container=''
+        trap 'if [[ -n "$container" ]]; then docker rm -v "$container" >/dev/null; fi; docker image rm "$image" >/dev/null 2>&1 || true; rm -rf -- "$work"' EXIT
+        jq -ce 'select(type == "object")' <<< "$RECEIPT" > "$work/context/receipt.json"
+        printf '%s\n' 'FROM scratch' 'COPY receipt.json /receipt.json' 'CMD ["/receipt.json"]' > "$work/context/Dockerfile"
+        docker build --provenance=false --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --label "org.opencontainers.image.revision=$GITHUB_SHA" -t "$image" "$work/context"
+        printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        docker push "$image"
+        digest=$(docker buildx imagetools inspect "$image" --format '{{.Manifest.Digest}}')
+        [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+        ref="${image%:*}@$digest"
+        docker pull "$ref"
+        container=$(docker create --network none "$ref")
+        docker cp "$container:/receipt.json" "$work/pulled.json"
+        cmp "$work/context/receipt.json" "$work/pulled.json"
+        echo "$image → $ref" >> "$GITHUB_STEP_SUMMARY"
