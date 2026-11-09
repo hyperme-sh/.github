@@ -1,9 +1,9 @@
 name: Publish qualified gateway runtime
 description: Copy a digest-bound same-run gateway image to GHCR from a clean publisher job.
 inputs:
-  artifact-id:
+  cache-key:
     required: true
-    description: Immutable Actions artifact ID produced by the qualification job
+    description: Exact same-run transfer key produced by the qualification job
   archive-sha256:
     required: true
     description: SHA-256 of the qualified docker-save archive
@@ -19,11 +19,11 @@ runs:
       run: |
         [[ "$GITHUB_WORKFLOW_REF" == 'hyperme-sh/hypermesh-gateway/.github/workflows/package.yml@refs/heads/main' ]]
         [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ]]
-    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+    - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
-        artifact-ids: ${{ inputs.artifact-id }}
-        merge-multiple: true
-        path: ${{ runner.temp }}/qualified-gateway
+        key: ${{ inputs.cache-key }}
+        path: .gateway-transfer/image.tar
+        fail-on-cache-miss: true
     - id: publish
       shell: bash
       env:
@@ -32,7 +32,7 @@ runs:
       run: |
         set -euo pipefail
         [[ "$EXPECTED" =~ ^[a-f0-9]{64}$ ]]
-        dir="$RUNNER_TEMP/qualified-gateway"
+        dir="$GITHUB_WORKSPACE/.gateway-transfer"
         archive="$dir/image.tar"
         [[ -f "$archive" && ! -L "$archive" ]]
         printf '%s  %s\n' "$EXPECTED" "$archive" | sha256sum --check --status
@@ -51,4 +51,6 @@ runs:
         [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
         skopeo inspect --authfile "$auth" --raw "docker://$repo@$digest" > "$private/manifest"
         printf '%s  %s\n' "${digest#sha256:}" "$private/manifest" | sha256sum --check --status
+        skopeo copy --authfile "$auth" "docker://$repo@$digest" "oci:$private/pulled:qualified"
+        test "$(skopeo inspect --config "$local_ref" | sha256sum)" = "$(skopeo inspect --config "oci:$private/pulled:qualified" | sha256sum)"
         echo "digest=$digest" >> "$GITHUB_OUTPUT"
