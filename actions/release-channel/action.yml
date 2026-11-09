@@ -4,6 +4,9 @@ inputs:
   workflow:
     description: Repository-relative validation workflow path
     required: true
+  package-source:
+    description: Tested package source (actions or ghcr)
+    default: actions
   token:
     description: Repository-scoped token with contents write and actions read
     required: true
@@ -17,6 +20,7 @@ runs:
     - shell: bash
       working-directory: ${{ runner.temp }}
       env:
+        PACKAGE_SOURCE: ${{ inputs.package-source }}
         GH_TOKEN: ${{ inputs.token }}
         VALIDATION_WORKFLOW: ${{ inputs.workflow }}
       run: uv run --no-project --no-config --managed-python --python 3.12 python "$GITHUB_ACTION_PATH/release.py"
