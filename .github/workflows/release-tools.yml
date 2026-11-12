@@ -26,6 +26,10 @@ jobs:
     runs-on: ubuntu-24.04
     container: debian:13-slim
     steps:
+      - name: Install Git for source provenance contract fixtures
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
