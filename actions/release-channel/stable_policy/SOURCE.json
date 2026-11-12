@@ -1,5 +1,5 @@
 {
   "repository": "hyperme-sh/spanopticon",
-  "revision": "43225361d5f421d3bbda2836b2911421da6d366a",
+  "revision": "55fc971dc24147b704d2099edd1de74a5c2d128a",
   "normalization": "Only from release.<module> imports are renamed to from stable_policy.<module>; vectors are byte-identical."
 }
