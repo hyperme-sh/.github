@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: hyperme-sh/spanopticon
-          ref: 55fc971dc24147b704d2099edd1de74a5c2d128a
+          ref: 85dd3e793e95dda0404ac4b117eb81e339b9060a
           path: .policy-source
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: hyperme-sh/spanopticon
-          ref: 55fc971dc24147b704d2099edd1de74a5c2d128a
+          ref: 85dd3e793e95dda0404ac4b117eb81e339b9060a
           path: .policy-source
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
