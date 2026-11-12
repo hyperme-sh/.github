@@ -14,6 +14,8 @@ from urllib.parse import urlencode
 from urllib.parse import quote
 import zipfile
 
+import service_channels
+
 from stable_policy import component_release
 from stable_policy.policy import json_document, same_json
 
@@ -468,6 +470,7 @@ def verify_existing_publication(repo, tag, revision, workflow, release):
     else:
         _, tested = tested_files(repo, workflow, revision, manifest['run_id'], manifest['artifact_id'])
     require(tested == files, 'Existing stable bytes differ from original tested artifact')
+    validate_service_channels(files)
     if configured:
         baseline = manifest['policy_baseline_revision']
         require(isinstance(baseline, str) and re.fullmatch('[0-9a-f]{40}', baseline), 'Invalid original baseline revision')
@@ -475,6 +478,10 @@ def verify_existing_publication(repo, tag, revision, workflow, release):
         independent_admission(repo, revision, tag, files, baseline_revision=baseline,
                               before_version=tag.removeprefix('v'), **options)
     print('Existing immutable stable publication verified; original provenance preserved')
+
+
+def validate_service_channels(files):
+    return service_channels.validate(files, os.environ.get('SERVICE_REPOSITORIES', '{}'))
 
 
 def main():
@@ -499,6 +506,7 @@ def main():
     else:
         artifact_id, files = tested_files(repo, workflow, revision, run_id)
         provenance = dict(schema=1, artifact_id=artifact_id)
+    validate_service_channels(files)
     manifest = dict(**provenance, repository=repo, channel='prod', tag=tag, revision=revision,
                     workflow=workflow, run_id=run_id,
                     assets={name: digest(data) for name, data in sorted(files.items())})

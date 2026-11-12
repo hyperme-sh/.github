@@ -1,6 +1,9 @@
 name: Verified stable packages
 description: Publish exact tested Actions artifacts only on an explicit stable tag.
 inputs:
+  service-repositories:
+    description: JSON map of service names to approved registry/repository paths; requires service-channels.json in the tested artifact
+    default: '{}'
   workflow:
     description: Repository-relative validation workflow path
     required: true
@@ -20,6 +23,7 @@ runs:
     - shell: bash
       working-directory: ${{ runner.temp }}
       env:
+        SERVICE_REPOSITORIES: ${{ inputs.service-repositories }}
         PACKAGE_SOURCE: ${{ inputs.package-source }}
         GH_TOKEN: ${{ inputs.token }}
         VALIDATION_WORKFLOW: ${{ inputs.workflow }}

@@ -78,3 +78,32 @@ For explicitly opted-in `next-test.N` bundle publication and byte-preserving
 bundle promotion, see [bundle-channel](../bundle-channel/README.md). That separate
 action preserves embedded package versions and does not weaken this package
 publisher's admission checks.
+
+## Service channels
+
+Optional `service-repositories` is a JSON map from service names to approved
+registry/repository paths, for example
+`{"api":"ghcr.io/hyperme-sh/api/runtime"}`. An opted-in caller includes a flat
+`service-channels.json` asset in its qualified artifact:
+
+```json
+{"schema":1,"services":{"api":"ghcr.io/hyperme-sh/api/runtime:test"}}
+```
+
+Both publishers and completed retries validate the entire service set before
+publication. References require an explicit tag in the configured repository;
+credentials, URLs, whitespace, digests and tag/digest combinations are refused.
+The tag is preserved without registry resolution. Independent peers may carry
+different patch versions. These fields configure service updates, not package
+identity or permission to promote production.
+
+The optional asset is hashed and compared with the original qualified bytes just
+like every other downloadable asset. Registry-backed package extraction retains
+its exact qualified OCI digest. Existing callers without service metadata remain
+compatible. Configure this input in the trusted publishing workflow, never from
+an untrusted PR input.
+
+The shared parser and `service-reference-vectors.json` in `actions/release-channel`
+are the contract for Spanopticon #70. Infra #922 owns the scheduled channel
+resolution and independently updated peer scenarios; this parser does not claim
+those runtime checks. No registry is contacted by the unit/contract suite.

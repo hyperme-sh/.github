@@ -1,6 +1,9 @@
 name: Versioned test bundles
 description: Publish qualified next-test.N bundles or promote an explicitly selected test without rebuilding.
 inputs:
+  service-repositories:
+    description: JSON map of service names to approved registry/repository paths; requires service-channels.json in the tested artifact
+    default: '{}'
   mode:
     description: test (workflow_run) or promote (explicit workflow_dispatch)
     required: true
@@ -17,6 +20,7 @@ runs:
     - shell: bash
       working-directory: ${{ runner.temp }}
       env:
+        SERVICE_REPOSITORIES: ${{ inputs.service-repositories }}
         GH_TOKEN: ${{ inputs.token }}
         BUNDLE_MODE: ${{ inputs.mode }}
       run: uv run --no-project --no-config --managed-python --python 3.12 python "$GITHUB_ACTION_PATH/../release-channel/bundle.py"
