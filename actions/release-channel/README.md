@@ -107,3 +107,22 @@ The shared parser and `service-reference-vectors.json` in `actions/release-chann
 are the contract for Spanopticon #70. Infra #922 owns the scheduled channel
 resolution and independently updated peer scenarios; this parser does not claim
 those runtime checks. No registry is contacted by the unit/contract suite.
+
+### First-build preparation
+
+`python prepare.py --candidate PATH/release.json --provenance PATH/preparation.json
+--source-root CHECKOUT` uses Spanopticon's vendored preparation contract. Install
+`packaging==25.0` for this optional preparation command. Existing publisher
+callers and production admission are unchanged. The output cannot authorize
+publication, claim a stable baseline, or replace the owner's fresh build and
+consumer qualification. Supply `--baseline-root` and `--repository` for a prior
+stable comparison; a source checkout containing an accepted record cannot omit
+that comparison. Test-only records fail stable verification.
+
+`stable_policy/preparation-vectors.json` is copied byte-for-byte from Spanopticon.
+The source manifest and verifier bind all preparation modules and vectors to the
+reviewed source revision. CI checks the copy against that source and exercises
+the same accepted/refused cases with a mocked registry. The scheduled-only
+`qualify_preparation.py` additionally compares the bundled path against current
+Spanopticon source. Infra #922 owns the combined registration; this addresses #19
+and depends on Spanopticon #71 / PR #73. No artifact is published by either path.
