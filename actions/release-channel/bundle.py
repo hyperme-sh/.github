@@ -64,6 +64,7 @@ def verify_test(repo, tag, config):
     r.require(manifest['assets'] == {name: r.digest(data) for name, data in payload.items()}, 'Test asset digest mismatch')
     _, tested = r.tested_files(repo, config['workflow'], revision, manifest['run_id'], manifest['artifact_id'])
     r.require(tested == payload, 'Test release differs from original qualified artifact')
+    r.validate_service_channels(payload)
     return revision, files
 
 
@@ -85,6 +86,7 @@ def publish_test(repo, event):
     r.validate_run(run, repo, config['workflow'], revision)
     r.require(r.qualified_run(repo, config['workflow'], revision) == run_id, 'Superseded validation run')
     artifact_id, payload = r.tested_files(repo, config['workflow'], revision, run_id)
+    r.validate_service_channels(payload)
     refs = inventory(repo, config['next'])
     matches = [tag for tag, sha in refs.values() if sha == revision]
     r.require(len(matches) <= 1, 'Multiple test tags for one source; inspect manually')
