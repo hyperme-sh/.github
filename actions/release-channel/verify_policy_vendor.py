@@ -7,7 +7,7 @@ import sys
 def verify(source, destination):
     source,destination=Path(source),Path(destination)
     record=json.loads((destination/'SOURCE.json').read_text())
-    if record['repository']!='hyperme-sh/spanopticon' or record['revision']!='fe9d83b359a3e36eb2d5b31c7165e41bc6605de0':
+    if record['repository']!='hyperme-sh/spanopticon' or record['revision']!='43225361d5f421d3bbda2836b2911421da6d366a':
         raise ValueError('Unexpected policy source')
     if (destination/'__init__.py').read_bytes()!=b'':raise ValueError('Policy initializer must not execute code')
     for original,bundled in [('release/policy.py','policy.py'),('release/accepted.py','accepted.py'),('scripts/component_release.py','component_release.py'),
