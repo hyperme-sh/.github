@@ -27,14 +27,14 @@ Private product documentation stays in `hypermesh-docs`. Public operator documen
 - **[hypermesh-cli](https://github.com/hyperme-sh/hypermesh-cli)** — Thin CLI (`hypermesh` and `hm`) to browse the catalog, check out a lease, chat on the router, and manage local MCP config.
 - **[hypermesh-visor](https://github.com/hyperme-sh/hypermesh-visor)** — Linux desktop daemon for a live session: view, watch, listen, mouse, and type.
 - **[hypermesh-vscode](https://github.com/hyperme-sh/hypermesh-vscode)** — VS Code extension that sends one short completion to a configured Hypermesh chat host.
-- **[hypermesh-conductor](https://github.com/hyperme-sh/hypermesh-conductor)** — Design for a budgeted, recoverable task runtime (model and host selection, token and time budgets). The repository holds that design; there is no package yet.
+- **[hypermesh-conductor](https://github.com/hyperme-sh/conductor)** — Design for a budgeted, recoverable task runtime (model and host selection, token and time budgets). The repository holds that design; there is no package yet.
 - **[hypermesh-bench](https://github.com/hyperme-sh/hypermesh-bench)** — Model and harness soak for host certification: recipes, scorecards, and an AGX Orin batch runner that hosts pull and run.
 
 ### Hypermesh plane
 
-- **[hypermesh-gateway](https://github.com/hyperme-sh/hypermesh-gateway)** — Ticket-authorized chat routing and WireGuard gateway. It validates lease tickets and proxies authorized chat to the assigned host.
+- **[hypermesh-gateway](https://github.com/hyperme-sh/gateway)** — Ticket-authorized chat routing and WireGuard gateway. It validates lease tickets and proxies authorized chat to the assigned host.
 - **[hypermesh-ticket](https://github.com/hyperme-sh/hypermesh-ticket)** — Lease-ticket signing and verification (`hm1` wire format) used by the gateway.
-- **[hypermesh-pricing](https://github.com/hyperme-sh/hypermesh-pricing)** — Stateless pricing engine: clearing rules (floor, base price, order book, day-ahead) and an internal HTTP service. Shipped tuning values are simulated defaults.
+- **[hypermesh-pricing](https://github.com/hyperme-sh/pricing)** — Stateless pricing engine: clearing rules (floor, base price, order book, day-ahead) and an internal HTTP service. Shipped tuning values are simulated defaults.
 
 ### Control-plane libraries and services
 
